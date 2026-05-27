@@ -6,8 +6,10 @@ const MAX_COUNT = 80;
 const CATEGORIES_PER_BATCH = 6;
 const WIKIPEDIA_CATEGORY_LIMIT = 150;
 const WIKIDATA_ENTITY_LIMIT = 50;
+const WIKIDATA_SPARQL_ENTITY_LIMIT = 20;
 const WIKIPEDIA_ENDPOINT = "https://en.wikipedia.org/w/api.php";
 const WIKIDATA_ENDPOINT = "https://www.wikidata.org/w/api.php";
+const WIKIDATA_SPARQL_ENDPOINT = "https://query.wikidata.org/sparql";
 const USER_AGENT = "CelebMemoryGame/1.0 (https://github.com/RetroSpectiveMax/CelebMemoryGame)";
 const ACTOR_ERA_CATEGORY_IDS = new Set<CelebrityCategoryId>(["classic-actors", "modern-actors"]);
 
@@ -60,6 +62,21 @@ type WikidataEntity = {
 
 type WikidataEntitiesResponse = {
   entities?: Record<string, WikidataEntity>;
+};
+
+type WikidataSparqlBinding = {
+  person?: {
+    value?: string;
+  };
+  workLabel?: {
+    value?: string;
+  };
+};
+
+type WikidataSparqlResponse = {
+  results?: {
+    bindings?: WikidataSparqlBinding[];
+  };
 };
 
 const categoryIds = [
@@ -249,6 +266,59 @@ const fetchWikidataEntities = async (
 const getNotableWorkId = (entity: WikidataEntity | undefined) =>
   entity?.claims?.P800?.find((claim) => claim.mainsnak?.datavalue?.value?.id)?.mainsnak?.datavalue?.value?.id;
 
+const getEntityIdFromWikidataUrl = (value: string | undefined) => value?.split("/").at(-1);
+
+const fetchCastMemberKnownFor = async (entityIds: string[]) => {
+  const knownForByEntityId = new Map<string, string>();
+  const entityChunks = chunkItems([...new Set(entityIds)].filter(Boolean), WIKIDATA_SPARQL_ENTITY_LIMIT);
+
+  await Promise.allSettled(
+    entityChunks.map(async (ids) => {
+      const values = ids.map((id) => `wd:${id}`).join(" ");
+      const query = `
+        SELECT ?person ?workLabel ?sitelinks WHERE {
+          VALUES ?person { ${values} }
+          ?work wdt:P161 ?person;
+                wikibase:sitelinks ?sitelinks;
+                wdt:P31/wdt:P279* ?workType.
+          VALUES ?workType { wd:Q11424 wd:Q5398426 }
+          SERVICE wikibase:label { bd:serviceParam wikibase:language "en". }
+        }
+        ORDER BY ?person DESC(?sitelinks)
+      `;
+      const body = new URLSearchParams({ query });
+      const response = await fetch(WIKIDATA_SPARQL_ENDPOINT, {
+        method: "POST",
+        headers: {
+          Accept: "application/sparql-results+json",
+          "Api-User-Agent": USER_AGENT,
+          "Content-Type": "application/x-www-form-urlencoded",
+          "User-Agent": USER_AGENT,
+        },
+        body,
+        signal: AbortSignal.timeout(9000),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Wikidata SPARQL returned ${response.status}`);
+      }
+
+      const data = (await response.json()) as WikidataSparqlResponse;
+
+      for (const binding of data.results?.bindings ?? []) {
+        const personId = getEntityIdFromWikidataUrl(binding.person?.value);
+        const workLabel = binding.workLabel?.value;
+
+        if (personId && workLabel && !knownForByEntityId.has(personId)) {
+          knownForByEntityId.set(personId, workLabel);
+        }
+      }
+    }),
+  );
+
+  return knownForByEntityId;
+};
+
 const enrichKnownFor = async (celebrities: LiveCelebrity[]): Promise<Celebrity[]> => {
   const wikidataIdsByCelebrityId = new Map(
     celebrities
@@ -263,10 +333,17 @@ const enrichKnownFor = async (celebrities: LiveCelebrity[]): Promise<Celebrity[]
       .filter((entry): entry is [string, string] => Boolean(entry[1])),
   );
   const workEntities = await fetchWikidataEntities([...notableWorkIdsByCelebrityId.values()], "labels");
+  const entityIdsMissingNotableWork = celebrities
+    .map((celebrity) => celebrity.wikidataId)
+    .filter((wikidataId): wikidataId is string => Boolean(wikidataId))
+    .filter((wikidataId) => !personEntities[wikidataId] || !getNotableWorkId(personEntities[wikidataId]));
+  const castMemberKnownForByEntityId = await fetchCastMemberKnownFor(entityIdsMissingNotableWork);
 
   return celebrities.map(({ wikidataId: _wikidataId, ...celebrity }) => {
     const notableWorkId = notableWorkIdsByCelebrityId.get(celebrity.id);
-    const knownFor = notableWorkId ? workEntities[notableWorkId]?.labels?.en?.value : undefined;
+    const notableWorkLabel = notableWorkId ? workEntities[notableWorkId]?.labels?.en?.value : undefined;
+    const castMemberWorkLabel = _wikidataId ? castMemberKnownForByEntityId.get(_wikidataId) : undefined;
+    const knownFor = notableWorkLabel ?? castMemberWorkLabel;
 
     return knownFor ? { ...celebrity, knownFor } : celebrity;
   });
