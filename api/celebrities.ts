@@ -27,7 +27,8 @@ type WikipediaCategoryResponse = {
 };
 
 const categoryIds = [
-  "actors",
+  "classic-actors",
+  "modern-actors",
   "musicians",
   "athletes",
   "comedians",
@@ -36,15 +37,21 @@ const categoryIds = [
 const categoryIdSet = new Set<string>(categoryIds);
 
 const wikipediaCategoriesByCategoryId: Record<CelebrityCategoryId, string[]> = {
-  actors: [
+  "classic-actors": [
+    "Category:20th-century American male actors",
+    "Category:20th-century American actresses",
+    "Category:20th-century British male actors",
+    "Category:20th-century British actresses",
     "Category:Best Actor Academy Award winners",
     "Category:Best Actress Academy Award winners",
-    "Category:Golden Globe Award-winning actors",
-    "Category:American film actors",
-    "Category:American television actors",
-    "Category:British film actors",
-    "Category:British television actors",
-    "Category:Canadian film actors",
+  ],
+  "modern-actors": [
+    "Category:21st-century American male actors",
+    "Category:21st-century American actresses",
+    "Category:21st-century British male actors",
+    "Category:21st-century British actresses",
+    "Category:21st-century Canadian male actors",
+    "Category:21st-century Canadian actresses",
   ],
   musicians: [
     "Category:Grammy Award winners",

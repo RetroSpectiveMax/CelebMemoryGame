@@ -412,6 +412,9 @@ function App() {
               onError={() => setImageFailed(true)}
             />
           )}
+          {currentCelebrity.knownFor && (
+            <div className="known-for-badge">Known for: {currentCelebrity.knownFor}</div>
+          )}
           <a
             className="photo-credit"
             href={currentCelebrity.sourceUrl}

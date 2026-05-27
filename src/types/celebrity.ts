@@ -1,8 +1,13 @@
 export const celebrityCategories = [
   {
-    id: "actors",
-    label: "Actors",
-    description: "Movie and TV stars from Hollywood and beyond.",
+    id: "classic-actors",
+    label: "Classic actors",
+    description: "Legacy movie and TV stars from earlier Hollywood eras.",
+  },
+  {
+    id: "modern-actors",
+    label: "Modern actors",
+    description: "Contemporary movie and TV stars from recent decades.",
   },
   {
     id: "musicians",
@@ -34,6 +39,7 @@ export type Celebrity = {
   name: string;
   aliases: string[];
   categories: CelebrityCategoryId[];
+  knownFor?: string;
   imageUrl: string;
   imageCredit: string;
   sourceUrl: string;

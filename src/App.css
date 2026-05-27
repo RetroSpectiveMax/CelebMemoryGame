@@ -166,7 +166,7 @@ h1 {
   position: absolute;
   z-index: 2;
   right: 14px;
-  bottom: 14px;
+  top: 14px;
   max-width: min(92%, 520px);
   border-radius: 999px;
   background: rgba(16, 24, 40, 0.76);
@@ -179,6 +179,18 @@ h1 {
 
 .photo-credit:hover {
   background: rgba(16, 24, 40, 0.92);
+}
+
+.known-for-badge {
+  position: relative;
+  z-index: 2;
+  background: rgba(16, 24, 40, 0.88);
+  color: white;
+  font-size: 0.95rem;
+  font-weight: 900;
+  letter-spacing: 0.01em;
+  padding: 14px 18px;
+  text-align: center;
 }
 
 .feedback {
