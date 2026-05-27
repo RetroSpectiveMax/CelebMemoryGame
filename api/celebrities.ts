@@ -1,8 +1,10 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import type { Celebrity, CelebrityBatchResponse } from "../src/types/celebrity";
 
-const DEFAULT_COUNT = 24;
-const MAX_COUNT = 50;
+const DEFAULT_COUNT = 50;
+const MAX_COUNT = 80;
+const CATEGORIES_PER_BATCH = 6;
+const WIKIPEDIA_CATEGORY_LIMIT = 150;
 const WIKIPEDIA_ENDPOINT = "https://en.wikipedia.org/w/api.php";
 const USER_AGENT = "CelebMemoryGame/1.0 (https://github.com/RetroSpectiveMax/CelebMemoryGame)";
 
@@ -109,7 +111,7 @@ const isPlayablePage = (page: WikipediaPage) => {
 const getCategoryWindow = (batch: number) => {
   const selectedCategories = [];
 
-  for (let index = 0; index < 4; index += 1) {
+  for (let index = 0; index < CATEGORIES_PER_BATCH; index += 1) {
     selectedCategories.push(categoryTitles[(batch + index) % categoryTitles.length]);
   }
 
@@ -122,7 +124,7 @@ const fetchCategoryCelebrities = async (categoryTitle: string): Promise<Celebrit
     generator: "categorymembers",
     gcmtitle: categoryTitle,
     gcmtype: "page",
-    gcmlimit: "80",
+    gcmlimit: String(WIKIPEDIA_CATEGORY_LIMIT),
     prop: "pageimages|info",
     piprop: "original|thumbnail",
     pithumbsize: "900",

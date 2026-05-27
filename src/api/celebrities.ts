@@ -1,7 +1,7 @@
 import { celebrities as fallbackCelebrities } from "../data/celebrities";
 import type { CelebrityBatchResponse } from "../types/celebrity";
 
-const DEFAULT_BATCH_SIZE = 24;
+const DEFAULT_BATCH_SIZE = 50;
 
 export const fetchCelebrityBatch = async (
   batch: number,

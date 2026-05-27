@@ -4,6 +4,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import { fetchCelebrityBatch } from "./api/celebrities";
@@ -12,6 +13,10 @@ import { isCorrectGuess } from "./utils/guess";
 
 const MAX_TEXT_ATTEMPTS = 3;
 const CHOICE_COUNT = 4;
+const RANDOM_BATCH_RANGE = 1000;
+const BATCH_LOAD_RETRY_LIMIT = 5;
+const RECENT_SEEN_STORAGE_KEY = "celebrity-memory-game:recent-seen";
+const RECENT_SEEN_LIMIT = 50;
 
 type GamePhase = "typing" | "multiple-choice" | "answered";
 
@@ -40,6 +45,44 @@ const buildChoices = (answer: Celebrity, pool: Celebrity[]) => {
   return shuffle([answer, ...distractors]);
 };
 
+const getRandomBatch = () => Math.floor(Math.random() * RANDOM_BATCH_RANGE);
+
+const readRecentSeenIds = () => {
+  if (typeof window === "undefined") {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(RECENT_SEEN_STORAGE_KEY) ?? "[]");
+
+    return Array.isArray(parsed)
+      ? parsed.filter((id): id is string => typeof id === "string")
+      : [];
+  } catch {
+    return [];
+  }
+};
+
+const rememberSeenCelebrity = (celebrityId: string) => {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  const recentSeenIds = readRecentSeenIds().filter((id) => id !== celebrityId);
+  recentSeenIds.push(celebrityId);
+
+  window.localStorage.setItem(
+    RECENT_SEEN_STORAGE_KEY,
+    JSON.stringify(recentSeenIds.slice(-RECENT_SEEN_LIMIT)),
+  );
+};
+
+const filterRecentlySeenCelebrities = (celebrities: Celebrity[]) => {
+  const recentSeenIds = new Set(readRecentSeenIds());
+
+  return celebrities.filter((celebrity) => !recentSeenIds.has(celebrity.id));
+};
+
 function App() {
   const [deck, setDeck] = useState<Celebrity[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -57,6 +100,7 @@ function App() {
   });
   const [choices, setChoices] = useState<Celebrity[]>([]);
   const [imageFailed, setImageFailed] = useState(false);
+  const hasLoadedInitialBatch = useRef(false);
 
   const currentCelebrity = deck[currentIndex];
   const progressLabel = currentCelebrity ? `${currentIndex + 1} / ${deck.length}` : "0 / 0";
@@ -82,24 +126,35 @@ function App() {
       setLoadError(null);
 
       try {
-        const result = await fetchCelebrityBatch(nextBatch);
+        for (let attempt = 0; attempt <= BATCH_LOAD_RETRY_LIMIT; attempt += 1) {
+          const batchToLoad = nextBatch + attempt;
+          const result = await fetchCelebrityBatch(batchToLoad);
 
-        if (result.celebrities.length < CHOICE_COUNT) {
-          throw new Error("Not enough celebrities were returned to build choices.");
+          if (result.celebrities.length < CHOICE_COUNT) {
+            throw new Error("Not enough celebrities were returned to build choices.");
+          }
+
+          const freshCelebrities = filterRecentlySeenCelebrities(result.celebrities);
+          const canUseFreshBatch = freshCelebrities.length >= CHOICE_COUNT;
+          const isLastAttempt = attempt === BATCH_LOAD_RETRY_LIMIT;
+          const celebrities = canUseFreshBatch ? freshCelebrities : result.celebrities;
+
+          if (canUseFreshBatch || result.source === "fallback" || isLastAttempt) {
+            setDeck(shuffle(celebrities));
+            setCurrentIndex(0);
+            setBatch(batchToLoad);
+            setDataSource(result.source);
+            resetRound();
+            setFeedback({
+              tone: "hint",
+              message:
+                result.source === "fallback"
+                  ? "Live celebrities are unavailable, so this round is using the backup list."
+                  : "Loaded a fresh live batch. Enter your best guess.",
+            });
+            return;
+          }
         }
-
-        setDeck(shuffle(result.celebrities));
-        setCurrentIndex(0);
-        setBatch(nextBatch);
-        setDataSource(result.source);
-        resetRound();
-        setFeedback({
-          tone: "hint",
-          message:
-            result.source === "fallback"
-              ? "Live celebrities are unavailable, so this round is using the backup list."
-              : "Loaded a fresh live batch. Enter your best guess.",
-        });
       } catch {
         setDeck([]);
         setCurrentIndex(0);
@@ -112,8 +167,21 @@ function App() {
   );
 
   useEffect(() => {
-    void loadBatch(0);
+    if (hasLoadedInitialBatch.current) {
+      return;
+    }
+
+    hasLoadedInitialBatch.current = true;
+    void loadBatch(getRandomBatch());
   }, [loadBatch]);
+
+  useEffect(() => {
+    if (!currentCelebrity) {
+      return;
+    }
+
+    rememberSeenCelebrity(currentCelebrity.id);
+  }, [currentCelebrity]);
 
   const startMultipleChoice = () => {
     if (!currentCelebrity) {
