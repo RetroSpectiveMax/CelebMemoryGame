@@ -4,11 +4,14 @@ import {
   useCallback,
   useEffect,
   useMemo,
-  useRef,
   useState,
 } from "react";
 import { fetchCelebrityBatch } from "./api/celebrities";
-import type { Celebrity } from "./types/celebrity";
+import {
+  celebrityCategories,
+  type Celebrity,
+  type CelebrityCategoryId,
+} from "./types/celebrity";
 import { isCorrectGuess } from "./utils/guess";
 
 const MAX_TEXT_ATTEMPTS = 3;
@@ -17,6 +20,9 @@ const RANDOM_BATCH_RANGE = 1000;
 const BATCH_LOAD_RETRY_LIMIT = 5;
 const RECENT_SEEN_STORAGE_KEY = "celebrity-memory-game:recent-seen";
 const RECENT_SEEN_LIMIT = 50;
+const categoryLabelsById = new Map(
+  celebrityCategories.map((category) => [category.id, category.label]),
+);
 
 type GamePhase = "typing" | "multiple-choice" | "answered";
 
@@ -46,6 +52,11 @@ const buildChoices = (answer: Celebrity, pool: Celebrity[]) => {
 };
 
 const getRandomBatch = () => Math.floor(Math.random() * RANDOM_BATCH_RANGE);
+
+const getCategorySummary = (categoryIds: CelebrityCategoryId[]) =>
+  categoryIds.length === 0
+    ? "All categories"
+    : categoryIds.map((categoryId) => categoryLabelsById.get(categoryId) ?? categoryId).join(", ");
 
 const readRecentSeenIds = () => {
   if (typeof window === "undefined") {
@@ -84,6 +95,9 @@ const filterRecentlySeenCelebrities = (celebrities: Celebrity[]) => {
 };
 
 function App() {
+  const [hasStartedGame, setHasStartedGame] = useState(false);
+  const [selectedCategoryIds, setSelectedCategoryIds] = useState<CelebrityCategoryId[]>([]);
+  const [activeCategoryIds, setActiveCategoryIds] = useState<CelebrityCategoryId[]>([]);
   const [deck, setDeck] = useState<Celebrity[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [batch, setBatch] = useState(0);
@@ -91,7 +105,7 @@ function App() {
   const [phase, setPhase] = useState<GamePhase>("typing");
   const [guess, setGuess] = useState("");
   const [attempts, setAttempts] = useState(0);
-  const [isLoadingBatch, setIsLoadingBatch] = useState(true);
+  const [isLoadingBatch, setIsLoadingBatch] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [dataSource, setDataSource] = useState<"live" | "fallback">("live");
   const [feedback, setFeedback] = useState<Feedback>({
@@ -100,11 +114,11 @@ function App() {
   });
   const [choices, setChoices] = useState<Celebrity[]>([]);
   const [imageFailed, setImageFailed] = useState(false);
-  const hasLoadedInitialBatch = useRef(false);
 
   const currentCelebrity = deck[currentIndex];
   const progressLabel = currentCelebrity ? `${currentIndex + 1} / ${deck.length}` : "0 / 0";
   const attemptsLeft = MAX_TEXT_ATTEMPTS - attempts;
+  const activeCategorySummary = getCategorySummary(activeCategoryIds);
 
   const choiceNames = useMemo(() => choices.map((choice) => choice.name), [choices]);
 
@@ -121,14 +135,14 @@ function App() {
   }, []);
 
   const loadBatch = useCallback(
-    async (nextBatch: number) => {
+    async (nextBatch: number, categoryIds = activeCategoryIds) => {
       setIsLoadingBatch(true);
       setLoadError(null);
 
       try {
         for (let attempt = 0; attempt <= BATCH_LOAD_RETRY_LIMIT; attempt += 1) {
           const batchToLoad = nextBatch + attempt;
-          const result = await fetchCelebrityBatch(batchToLoad);
+          const result = await fetchCelebrityBatch(batchToLoad, undefined, categoryIds);
 
           if (result.celebrities.length < CHOICE_COUNT) {
             throw new Error("Not enough celebrities were returned to build choices.");
@@ -150,7 +164,7 @@ function App() {
               message:
                 result.source === "fallback"
                   ? "Live celebrities are unavailable, so this round is using the backup list."
-                  : "Loaded a fresh live batch. Enter your best guess.",
+                  : `Loaded ${getCategorySummary(categoryIds).toLowerCase()}. Enter your best guess.`,
             });
             return;
           }
@@ -163,17 +177,8 @@ function App() {
         setIsLoadingBatch(false);
       }
     },
-    [resetRound],
+    [activeCategoryIds, resetRound],
   );
-
-  useEffect(() => {
-    if (hasLoadedInitialBatch.current) {
-      return;
-    }
-
-    hasLoadedInitialBatch.current = true;
-    void loadBatch(getRandomBatch());
-  }, [loadBatch]);
 
   useEffect(() => {
     if (!currentCelebrity) {
@@ -182,6 +187,32 @@ function App() {
 
     rememberSeenCelebrity(currentCelebrity.id);
   }, [currentCelebrity]);
+
+  const toggleSelectedCategory = (categoryId: CelebrityCategoryId) => {
+    setSelectedCategoryIds((currentCategoryIds) =>
+      currentCategoryIds.includes(categoryId)
+        ? currentCategoryIds.filter((selectedCategoryId) => selectedCategoryId !== categoryId)
+        : [...currentCategoryIds, categoryId],
+    );
+  };
+
+  const handleStartGame = () => {
+    const categoryIds = [...selectedCategoryIds];
+
+    setActiveCategoryIds(categoryIds);
+    setScore(0);
+    setHasStartedGame(true);
+    void loadBatch(getRandomBatch(), categoryIds);
+  };
+
+  const handleChangeCategories = () => {
+    setHasStartedGame(false);
+    setDeck([]);
+    setCurrentIndex(0);
+    setLoadError(null);
+    setIsLoadingBatch(false);
+    resetRound();
+  };
 
   const startMultipleChoice = () => {
     if (!currentCelebrity) {
@@ -260,13 +291,60 @@ function App() {
 
   const handleNext = () => {
     if (currentIndex >= deck.length - 1) {
-      void loadBatch(batch + 1);
+      void loadBatch(batch + 1, activeCategoryIds);
       return;
     }
 
     setCurrentIndex((index) => index + 1);
     resetRound();
   };
+
+  if (!hasStartedGame) {
+    return (
+      <main className="app-shell">
+        <section className="game-card game-card--complete setup-card" aria-labelledby="setup-title">
+          <p className="eyebrow">Celebrity Memory Game</p>
+          <h1 id="setup-title">Choose your categories</h1>
+          <p className="summary">
+            Pick one category or combine a few. Leave everything unselected to play with all
+            celebrities.
+          </p>
+
+          <div className="category-grid" role="group" aria-label="Celebrity categories">
+            {celebrityCategories.map((category) => {
+              const isSelected = selectedCategoryIds.includes(category.id);
+
+              return (
+                <label
+                  className={`category-option${isSelected ? " category-option--selected" : ""}`}
+                  key={category.id}
+                >
+                  <input
+                    type="checkbox"
+                    checked={isSelected}
+                    onChange={() => toggleSelectedCategory(category.id)}
+                  />
+                  <span>{category.label}</span>
+                  <small>{category.description}</small>
+                </label>
+              );
+            })}
+          </div>
+
+          <p className="category-summary">Selected: {getCategorySummary(selectedCategoryIds)}</p>
+
+          <div className="setup-actions">
+            <button className="secondary-button" type="button" onClick={() => setSelectedCategoryIds([])}>
+              Use all categories
+            </button>
+            <button className="primary-button" type="button" onClick={handleStartGame}>
+              Start game
+            </button>
+          </div>
+        </section>
+      </main>
+    );
+  }
 
   if (isLoadingBatch || !currentCelebrity) {
     return (
@@ -276,12 +354,21 @@ function App() {
           <h1 id="loading-title">{loadError ? "Could not load celebrities" : "Loading celebrities..."}</h1>
           <p className="summary">
             {loadError ??
-              "Fetching a fresh batch of free Wikimedia celebrity photos for the next round."}
+              `Fetching ${activeCategorySummary.toLowerCase()} from free Wikimedia celebrity photos.`}
           </p>
           {loadError && (
-            <button className="primary-button" type="button" onClick={() => void loadBatch(batch)}>
-              Try again
-            </button>
+            <div className="setup-actions">
+              <button className="secondary-button" type="button" onClick={handleChangeCategories}>
+                Change categories
+              </button>
+              <button
+                className="primary-button"
+                type="button"
+                onClick={() => void loadBatch(batch, activeCategoryIds)}
+              >
+                Try again
+              </button>
+            </div>
           )}
         </section>
       </main>
@@ -295,11 +382,17 @@ function App() {
           <div>
             <p className="eyebrow">Celebrity Memory Game</p>
             <h1 id="game-title">Who is this celebrity?</h1>
+            <p className="active-categories">{activeCategorySummary}</p>
           </div>
-          <div className="scoreboard" aria-label="Game progress and score">
-            <span>{progressLabel}</span>
-            <strong>{score} pts</strong>
-            <small>{dataSource === "live" ? "Live batch" : "Backup list"}</small>
+          <div className="header-actions">
+            <div className="scoreboard" aria-label="Game progress and score">
+              <span>{progressLabel}</span>
+              <strong>{score} pts</strong>
+              <small>{dataSource === "live" ? "Live batch" : "Backup list"}</small>
+            </div>
+            <button className="secondary-button compact-button" type="button" onClick={handleChangeCategories}>
+              Change categories
+            </button>
           </div>
         </header>
 

@@ -54,12 +54,22 @@ a {
   text-align: center;
 }
 
+.setup-card {
+  max-width: 760px;
+}
+
 .game-header {
   display: flex;
   gap: 24px;
   align-items: flex-start;
   justify-content: space-between;
   margin-bottom: 24px;
+}
+
+.header-actions {
+  display: grid;
+  gap: 10px;
+  justify-items: end;
 }
 
 .eyebrow {
@@ -103,6 +113,12 @@ h1 {
   font-size: 0.72rem;
   font-weight: 800;
   text-transform: uppercase;
+}
+
+.active-categories {
+  margin: 12px 0 0;
+  color: #667085;
+  font-weight: 800;
 }
 
 .photo-panel {
@@ -244,6 +260,10 @@ h1 {
   padding: 14px 20px;
 }
 
+.compact-button {
+  padding: 10px 14px;
+}
+
 .primary-button:hover,
 .secondary-button:hover,
 .choice-button:hover {
@@ -260,6 +280,70 @@ h1 {
 .summary {
   margin: 0;
   color: #667085;
+}
+
+.category-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin: 28px 0 18px;
+  text-align: left;
+}
+
+.category-option {
+  display: grid;
+  gap: 8px;
+  min-height: 132px;
+  border: 1px solid rgba(16, 24, 40, 0.12);
+  border-radius: 20px;
+  background: #ffffff;
+  cursor: pointer;
+  padding: 18px;
+  transition:
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    transform 160ms ease;
+}
+
+.category-option:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 14px 34px rgba(16, 24, 40, 0.1);
+}
+
+.category-option--selected {
+  border-color: #f0b429;
+  background: #fffbeb;
+  box-shadow: 0 0 0 4px rgba(240, 180, 41, 0.18);
+}
+
+.category-option input {
+  width: 18px;
+  height: 18px;
+  accent-color: #f0b429;
+}
+
+.category-option span {
+  color: #101828;
+  font-size: 1.05rem;
+  font-weight: 900;
+}
+
+.category-option small {
+  color: #667085;
+  line-height: 1.45;
+}
+
+.category-summary {
+  margin: 0 0 18px;
+  color: #344054;
+  font-weight: 800;
+}
+
+.setup-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  justify-content: center;
 }
 
 .choice-panel {
@@ -305,13 +389,23 @@ h1 {
 
 @media (max-width: 680px) {
   .game-header,
-  .guess-row {
+  .guess-row,
+  .setup-actions {
     flex-direction: column;
+  }
+
+  .header-actions {
+    width: 100%;
+    justify-items: stretch;
   }
 
   .scoreboard {
     width: 100%;
     text-align: left;
+  }
+
+  .category-grid {
+    grid-template-columns: 1fr;
   }
 
   .choice-panel {

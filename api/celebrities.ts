@@ -1,5 +1,10 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import type { Celebrity, CelebrityBatchResponse } from "../src/types/celebrity";
+import {
+  celebrityCategories,
+  type Celebrity,
+  type CelebrityBatchResponse,
+  type CelebrityCategoryId,
+} from "../src/types/celebrity";
 
 const DEFAULT_COUNT = 50;
 const MAX_COUNT = 80;
@@ -26,27 +31,46 @@ type WikipediaCategoryResponse = {
   };
 };
 
-const categoryTitles = [
-  "Category:Best Actor Academy Award winners",
-  "Category:Best Actress Academy Award winners",
-  "Category:Grammy Award winners",
-  "Category:Primetime Emmy Award winners",
-  "Category:Golden Globe Award-winning actors",
-  "Category:MTV Video Music Award winners",
-  "Category:Billboard Music Award winners",
-  "Category:American film actors",
-  "Category:American television actors",
-  "Category:American pop singers",
-  "Category:American rappers",
-  "Category:American comedians",
-  "Category:British film actors",
-  "Category:British television actors",
-  "Category:Canadian film actors",
-  "Category:Grammy Award winners",
-  "Category:Academy Award winners",
-  "Category:Olympic gold medalists for the United States",
-  "Category:Association football players",
-];
+const categoryIds = celebrityCategories.map((category) => category.id);
+const categoryIdSet = new Set<string>(categoryIds);
+
+const wikipediaCategoriesByCategoryId: Record<CelebrityCategoryId, string[]> = {
+  actors: [
+    "Category:Best Actor Academy Award winners",
+    "Category:Best Actress Academy Award winners",
+    "Category:Golden Globe Award-winning actors",
+    "Category:American film actors",
+    "Category:American television actors",
+    "Category:British film actors",
+    "Category:British television actors",
+    "Category:Canadian film actors",
+  ],
+  musicians: [
+    "Category:Grammy Award winners",
+    "Category:MTV Video Music Award winners",
+    "Category:Billboard Music Award winners",
+    "Category:American pop singers",
+    "Category:American rappers",
+  ],
+  athletes: [
+    "Category:Olympic gold medalists for the United States",
+    "Category:Association football players",
+    "Category:National Basketball Association players",
+    "Category:Tennis players",
+  ],
+  comedians: [
+    "Category:American comedians",
+    "Category:British comedians",
+    "Category:Canadian comedians",
+    "Category:Stand-up comedians",
+  ],
+  "public-figures": [
+    "Category:Presidents of the United States",
+    "Category:American television personalities",
+    "Category:British television personalities",
+    "Category:American businesspeople",
+  ],
+};
 
 const clampCount = (value: string | string[] | undefined) => {
   const rawValue = Array.isArray(value) ? value[0] : value;
@@ -68,6 +92,15 @@ const parseBatch = (value: string | string[] | undefined) => {
   }
 
   return Math.trunc(parsed);
+};
+
+const parseCategoryIds = (value: string | string[] | undefined): CelebrityCategoryId[] => {
+  const rawValues = (Array.isArray(value) ? value : [value])
+    .filter((item): item is string => Boolean(item))
+    .flatMap((item) => item.split(","));
+  const selectedIds = rawValues.filter((item): item is CelebrityCategoryId => categoryIdSet.has(item));
+
+  return selectedIds.length > 0 ? [...new Set(selectedIds)] : categoryIds;
 };
 
 const seededRandom = (seed: number) => {
@@ -108,7 +141,15 @@ const isPlayablePage = (page: WikipediaPage) => {
   );
 };
 
-const getCategoryWindow = (batch: number) => {
+const getCategoryWindow = (batch: number, selectedCategoryIds: CelebrityCategoryId[]) => {
+  const categoryTitles = selectedCategoryIds.flatMap((categoryId) =>
+    wikipediaCategoriesByCategoryId[categoryId].map((title) => ({ categoryId, title })),
+  );
+
+  if (categoryTitles.length <= CATEGORIES_PER_BATCH) {
+    return categoryTitles;
+  }
+
   const selectedCategories = [];
 
   for (let index = 0; index < CATEGORIES_PER_BATCH; index += 1) {
@@ -118,7 +159,10 @@ const getCategoryWindow = (batch: number) => {
   return selectedCategories;
 };
 
-const fetchCategoryCelebrities = async (categoryTitle: string): Promise<Celebrity[]> => {
+const fetchCategoryCelebrities = async (
+  categoryId: CelebrityCategoryId,
+  categoryTitle: string,
+): Promise<Celebrity[]> => {
   const params = new URLSearchParams({
     action: "query",
     generator: "categorymembers",
@@ -156,6 +200,7 @@ const fetchCategoryCelebrities = async (categoryTitle: string): Promise<Celebrit
       id: String(page.pageid),
       name,
       aliases: page.title === name ? [] : [page.title],
+      categories: [categoryId],
       imageUrl: imageUrl.replace("http://", "https://"),
       imageCredit: "Wikipedia / Wikimedia Commons",
       sourceUrl: page.fullurl ?? `https://en.wikipedia.org/wiki/${encodeURIComponent(page.title)}`,
@@ -163,12 +208,30 @@ const fetchCategoryCelebrities = async (categoryTitle: string): Promise<Celebrit
   });
 };
 
-const fetchLiveCelebrities = async (count: number, batch: number): Promise<Celebrity[]> => {
-  const categoryResults = await Promise.all(getCategoryWindow(batch).map(fetchCategoryCelebrities));
+const fetchLiveCelebrities = async (
+  count: number,
+  batch: number,
+  selectedCategoryIds: CelebrityCategoryId[],
+): Promise<Celebrity[]> => {
+  const categoryResults = await Promise.all(
+    getCategoryWindow(batch, selectedCategoryIds).map(({ categoryId, title }) =>
+      fetchCategoryCelebrities(categoryId, title),
+    ),
+  );
   const uniqueCelebrities = new Map<string, Celebrity>();
 
   for (const celebrity of categoryResults.flat()) {
-    uniqueCelebrities.set(celebrity.id, celebrity);
+    const existingCelebrity = uniqueCelebrities.get(celebrity.id);
+
+    uniqueCelebrities.set(
+      celebrity.id,
+      existingCelebrity
+        ? {
+            ...existingCelebrity,
+            categories: [...new Set([...existingCelebrity.categories, ...celebrity.categories])],
+          }
+        : celebrity,
+    );
   }
 
   return seededShuffle([...uniqueCelebrities.values()], batch + 1).slice(0, count);
@@ -183,9 +246,10 @@ export default async function handler(request: VercelRequest, response: VercelRe
 
   const count = clampCount(request.query.count);
   const batch = parseBatch(request.query.batch);
+  const selectedCategoryIds = parseCategoryIds(request.query.categories);
 
   try {
-    const celebrities = await fetchLiveCelebrities(count, batch);
+    const celebrities = await fetchLiveCelebrities(count, batch, selectedCategoryIds);
 
     if (celebrities.length < 4) {
       throw new Error("Wikipedia returned too few playable celebrities");
