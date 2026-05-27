@@ -5,8 +5,11 @@ const DEFAULT_COUNT = 50;
 const MAX_COUNT = 80;
 const CATEGORIES_PER_BATCH = 6;
 const WIKIPEDIA_CATEGORY_LIMIT = 150;
+const WIKIDATA_ENTITY_LIMIT = 50;
 const WIKIPEDIA_ENDPOINT = "https://en.wikipedia.org/w/api.php";
+const WIKIDATA_ENDPOINT = "https://www.wikidata.org/w/api.php";
 const USER_AGENT = "CelebMemoryGame/1.0 (https://github.com/RetroSpectiveMax/CelebMemoryGame)";
+const ACTOR_ERA_CATEGORY_IDS = new Set<CelebrityCategoryId>(["classic-actors", "modern-actors"]);
 
 type WikipediaPage = {
   pageid: number;
@@ -18,12 +21,45 @@ type WikipediaPage = {
   original?: {
     source: string;
   };
+  pageprops?: {
+    wikibase_item?: string;
+  };
+};
+
+type LiveCelebrity = Celebrity & {
+  wikidataId?: string;
 };
 
 type WikipediaCategoryResponse = {
   query?: {
     pages?: Record<string, WikipediaPage>;
   };
+};
+
+type WikidataClaim = {
+  mainsnak?: {
+    datavalue?: {
+      value?: {
+        id?: string;
+      };
+    };
+  };
+};
+
+type WikidataEntity = {
+  id: string;
+  labels?: {
+    en?: {
+      value?: string;
+    };
+  };
+  claims?: {
+    P800?: WikidataClaim[];
+  };
+};
+
+type WikidataEntitiesResponse = {
+  entities?: Record<string, WikidataEntity>;
 };
 
 const categoryIds = [
@@ -149,6 +185,93 @@ const isPlayablePage = (page: WikipediaPage) => {
   );
 };
 
+const chunkItems = <T,>(items: T[], size: number) => {
+  const chunks: T[][] = [];
+
+  for (let index = 0; index < items.length; index += size) {
+    chunks.push(items.slice(index, index + size));
+  }
+
+  return chunks;
+};
+
+const fetchWikidataEntities = async (
+  entityIds: string[],
+  props: "claims" | "labels",
+): Promise<Record<string, WikidataEntity>> => {
+  const uniqueEntityIds = [...new Set(entityIds)].filter(Boolean);
+
+  if (uniqueEntityIds.length === 0) {
+    return {};
+  }
+
+  const entityChunks = chunkItems(uniqueEntityIds, WIKIDATA_ENTITY_LIMIT);
+  const entityResults = await Promise.allSettled(
+    entityChunks.map(async (ids) => {
+      const params = new URLSearchParams({
+        action: "wbgetentities",
+        ids: ids.join("|"),
+        props,
+        languages: "en",
+        format: "json",
+        origin: "*",
+      });
+
+      const response = await fetch(`${WIKIDATA_ENDPOINT}?${params.toString()}`, {
+        headers: {
+          Accept: "application/json",
+          "Api-User-Agent": USER_AGENT,
+          "User-Agent": USER_AGENT,
+        },
+        signal: AbortSignal.timeout(9000),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Wikidata returned ${response.status}`);
+      }
+
+      const data = (await response.json()) as WikidataEntitiesResponse;
+
+      return data.entities ?? {};
+    }),
+  );
+
+  return entityResults
+    .filter((result): result is PromiseFulfilledResult<Record<string, WikidataEntity>> =>
+      result.status === "fulfilled",
+    )
+    .reduce<Record<string, WikidataEntity>>(
+      (entitiesById, result) => ({ ...entitiesById, ...result.value }),
+      {},
+    );
+};
+
+const getNotableWorkId = (entity: WikidataEntity | undefined) =>
+  entity?.claims?.P800?.find((claim) => claim.mainsnak?.datavalue?.value?.id)?.mainsnak?.datavalue?.value?.id;
+
+const enrichKnownFor = async (celebrities: LiveCelebrity[]): Promise<Celebrity[]> => {
+  const wikidataIdsByCelebrityId = new Map(
+    celebrities
+      .filter((celebrity) => celebrity.wikidataId)
+      .map((celebrity) => [celebrity.id, celebrity.wikidataId as string]),
+  );
+
+  const personEntities = await fetchWikidataEntities([...wikidataIdsByCelebrityId.values()], "claims");
+  const notableWorkIdsByCelebrityId = new Map(
+    celebrities
+      .map((celebrity) => [celebrity.id, getNotableWorkId(personEntities[celebrity.wikidataId ?? ""])])
+      .filter((entry): entry is [string, string] => Boolean(entry[1])),
+  );
+  const workEntities = await fetchWikidataEntities([...notableWorkIdsByCelebrityId.values()], "labels");
+
+  return celebrities.map(({ wikidataId: _wikidataId, ...celebrity }) => {
+    const notableWorkId = notableWorkIdsByCelebrityId.get(celebrity.id);
+    const knownFor = notableWorkId ? workEntities[notableWorkId]?.labels?.en?.value : undefined;
+
+    return knownFor ? { ...celebrity, knownFor } : celebrity;
+  });
+};
+
 const getCategoryWindow = (batch: number, selectedCategoryIds: CelebrityCategoryId[]) => {
   const categoryTitles = selectedCategoryIds.flatMap((categoryId) =>
     wikipediaCategoriesByCategoryId[categoryId].map((title) => ({ categoryId, title })),
@@ -167,17 +290,20 @@ const getCategoryWindow = (batch: number, selectedCategoryIds: CelebrityCategory
   return selectedCategories;
 };
 
+const includesActorEraCategory = (selectedCategoryIds: CelebrityCategoryId[]) =>
+  selectedCategoryIds.some((categoryId) => ACTOR_ERA_CATEGORY_IDS.has(categoryId));
+
 const fetchCategoryCelebrities = async (
   categoryId: CelebrityCategoryId,
   categoryTitle: string,
-): Promise<Celebrity[]> => {
+): Promise<LiveCelebrity[]> => {
   const params = new URLSearchParams({
     action: "query",
     generator: "categorymembers",
     gcmtitle: categoryTitle,
     gcmtype: "page",
     gcmlimit: String(WIKIPEDIA_CATEGORY_LIMIT),
-    prop: "pageimages|info",
+    prop: "pageimages|info|pageprops",
     piprop: "original|thumbnail",
     pithumbsize: "900",
     inprop: "url",
@@ -201,7 +327,7 @@ const fetchCategoryCelebrities = async (
   const data = (await response.json()) as WikipediaCategoryResponse;
   const pages = Object.values(data.query?.pages ?? {});
 
-  return pages.filter(isPlayablePage).map<Celebrity>((page) => {
+  return pages.filter(isPlayablePage).map<LiveCelebrity>((page) => {
     const name = normalizeTitle(page.title);
     const imageUrl = page.original?.source ?? page.thumbnail?.source ?? "";
     return {
@@ -212,6 +338,7 @@ const fetchCategoryCelebrities = async (
       imageUrl: imageUrl.replace("http://", "https://"),
       imageCredit: "Wikipedia / Wikimedia Commons",
       sourceUrl: page.fullurl ?? `https://en.wikipedia.org/wiki/${encodeURIComponent(page.title)}`,
+      wikidataId: page.pageprops?.wikibase_item,
     };
   });
 };
@@ -232,7 +359,7 @@ const fetchLiveCelebrities = async (
     .map((result) => (result.reason instanceof Error ? result.reason.message : "Unknown category error"));
   const successfulCategoryResults = categoryResults
     .filter(
-      (result): result is PromiseFulfilledResult<{ celebrities: Celebrity[]; title: string }> =>
+      (result): result is PromiseFulfilledResult<{ celebrities: LiveCelebrity[]; title: string }> =>
         result.status === "fulfilled",
     )
     .flatMap((result) => result.value.celebrities);
@@ -241,7 +368,7 @@ const fetchLiveCelebrities = async (
     console.warn("Some Wikipedia categories failed to load:", failedCategoryTitles);
   }
 
-  const uniqueCelebrities = new Map<string, Celebrity>();
+  const uniqueCelebrities = new Map<string, LiveCelebrity>();
 
   for (const celebrity of successfulCategoryResults) {
     const existingCelebrity = uniqueCelebrities.get(celebrity.id);
@@ -257,7 +384,20 @@ const fetchLiveCelebrities = async (
     );
   }
 
-  return seededShuffle([...uniqueCelebrities.values()], batch + 1).slice(0, count);
+  const shuffledCelebrities = seededShuffle([...uniqueCelebrities.values()], batch + 1);
+  const shouldRequireKnownFor = includesActorEraCategory(selectedCategoryIds);
+  const enrichmentCount = shouldRequireKnownFor ? Math.min(shuffledCelebrities.length, count * 2) : count;
+  const enrichedCelebrities = await enrichKnownFor(shuffledCelebrities.slice(0, enrichmentCount));
+
+  if (shouldRequireKnownFor) {
+    const celebritiesWithKnownFor = enrichedCelebrities.filter((celebrity) => celebrity.knownFor);
+
+    if (celebritiesWithKnownFor.length >= 4) {
+      return celebritiesWithKnownFor.slice(0, count);
+    }
+  }
+
+  return enrichedCelebrities.slice(0, count);
 };
 
 export default async function handler(request: VercelRequest, response: VercelResponse) {

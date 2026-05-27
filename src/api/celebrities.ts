@@ -2,7 +2,6 @@ import { celebrities as fallbackCelebrities } from "../data/celebrities";
 import type { Celebrity, CelebrityBatchResponse, CelebrityCategoryId } from "../types/celebrity";
 
 const DEFAULT_BATCH_SIZE = 50;
-const actorEraCategoryIds = new Set<CelebrityCategoryId>(["classic-actors", "modern-actors"]);
 
 type CelebrityApiErrorResponse = {
   error?: string;
@@ -24,10 +23,6 @@ const filterByCategories = (
   );
 };
 
-const isActorEraOnlySelection = (selectedCategoryIds: CelebrityCategoryId[]) =>
-  selectedCategoryIds.length > 0 &&
-  selectedCategoryIds.every((categoryId) => actorEraCategoryIds.has(categoryId));
-
 export const fetchCelebrityBatch = async (
   batch: number,
   count = DEFAULT_BATCH_SIZE,
@@ -40,15 +35,6 @@ export const fetchCelebrityBatch = async (
 
   if (selectedCategoryIds.length > 0) {
     params.set("categories", selectedCategoryIds.join(","));
-  }
-
-  if (isActorEraOnlySelection(selectedCategoryIds)) {
-    const celebrities = filterByCategories(fallbackCelebrities, selectedCategoryIds);
-
-    return {
-      celebrities,
-      source: "fallback",
-    };
   }
 
   try {
