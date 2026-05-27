@@ -1,10 +1,5 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import {
-  celebrityCategories,
-  type Celebrity,
-  type CelebrityBatchResponse,
-  type CelebrityCategoryId,
-} from "../src/types/celebrity";
+import type { Celebrity, CelebrityBatchResponse, CelebrityCategoryId } from "../src/types/celebrity";
 
 const DEFAULT_COUNT = 50;
 const MAX_COUNT = 80;
@@ -31,7 +26,13 @@ type WikipediaCategoryResponse = {
   };
 };
 
-const categoryIds = celebrityCategories.map((category) => category.id);
+const categoryIds = [
+  "actors",
+  "musicians",
+  "athletes",
+  "comedians",
+  "public-figures",
+] satisfies CelebrityCategoryId[];
 const categoryIdSet = new Set<string>(categoryIds);
 
 const wikipediaCategoriesByCategoryId: Record<CelebrityCategoryId, string[]> = {
