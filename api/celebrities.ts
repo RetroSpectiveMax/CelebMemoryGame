@@ -213,14 +213,29 @@ const fetchLiveCelebrities = async (
   batch: number,
   selectedCategoryIds: CelebrityCategoryId[],
 ): Promise<Celebrity[]> => {
-  const categoryResults = await Promise.all(
-    getCategoryWindow(batch, selectedCategoryIds).map(({ categoryId, title }) =>
-      fetchCategoryCelebrities(categoryId, title),
-    ),
+  const categoryResults = await Promise.allSettled(
+    getCategoryWindow(batch, selectedCategoryIds).map(async ({ categoryId, title }) => ({
+      celebrities: await fetchCategoryCelebrities(categoryId, title),
+      title,
+    })),
   );
+  const failedCategoryTitles = categoryResults
+    .filter((result): result is PromiseRejectedResult => result.status === "rejected")
+    .map((result) => (result.reason instanceof Error ? result.reason.message : "Unknown category error"));
+  const successfulCategoryResults = categoryResults
+    .filter(
+      (result): result is PromiseFulfilledResult<{ celebrities: Celebrity[]; title: string }> =>
+        result.status === "fulfilled",
+    )
+    .flatMap((result) => result.value.celebrities);
+
+  if (failedCategoryTitles.length > 0) {
+    console.warn("Some Wikipedia categories failed to load:", failedCategoryTitles);
+  }
+
   const uniqueCelebrities = new Map<string, Celebrity>();
 
-  for (const celebrity of categoryResults.flat()) {
+  for (const celebrity of successfulCategoryResults) {
     const existingCelebrity = uniqueCelebrities.get(celebrity.id);
 
     uniqueCelebrities.set(
