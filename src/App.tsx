@@ -115,6 +115,19 @@ function App() {
     void loadBatch(0);
   }, [loadBatch]);
 
+  const startMultipleChoice = () => {
+    if (!currentCelebrity) {
+      return;
+    }
+
+    setPhase("multiple-choice");
+    setChoices(buildChoices(currentCelebrity, deck));
+    setFeedback({
+      tone: "hint",
+      message: "No worries. Pick the correct name from these choices.",
+    });
+  };
+
   const handleGuessSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
@@ -136,12 +149,7 @@ function App() {
     setAttempts(nextAttempts);
 
     if (nextAttempts >= MAX_TEXT_ATTEMPTS) {
-      setPhase("multiple-choice");
-      setChoices(buildChoices(currentCelebrity, deck));
-      setFeedback({
-        tone: "hint",
-        message: "No worries. Pick the correct name from these choices.",
-      });
+      startMultipleChoice();
       return;
     }
 
@@ -151,6 +159,15 @@ function App() {
         MAX_TEXT_ATTEMPTS - nextAttempts === 1 ? "try" : "tries"
       } left before multiple choice.`,
     });
+  };
+
+  const handleSkipToMultipleChoice = () => {
+    if (phase !== "typing") {
+      return;
+    }
+
+    setAttempts(MAX_TEXT_ATTEMPTS);
+    startMultipleChoice();
   };
 
   const handleChoiceSelect = (choice: Celebrity) => {
@@ -262,6 +279,9 @@ function App() {
               />
               <button className="primary-button" type="submit">
                 Guess
+              </button>
+              <button className="secondary-button" type="button" onClick={handleSkipToMultipleChoice}>
+                Skip to multiple choice
               </button>
             </div>
             <p className="attempts">

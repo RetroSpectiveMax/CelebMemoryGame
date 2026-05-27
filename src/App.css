@@ -217,6 +217,7 @@ h1 {
 }
 
 .primary-button,
+.secondary-button,
 .choice-button {
   border: 0;
   cursor: pointer;
@@ -235,12 +236,22 @@ h1 {
   box-shadow: 0 10px 24px rgba(160, 112, 0, 0.2);
 }
 
+.secondary-button {
+  border: 1px solid #d0d5dd;
+  border-radius: 16px;
+  background: #ffffff;
+  color: #344054;
+  padding: 14px 20px;
+}
+
 .primary-button:hover,
+.secondary-button:hover,
 .choice-button:hover {
   transform: translateY(-1px);
 }
 
 .primary-button:active,
+.secondary-button:active,
 .choice-button:active {
   transform: translateY(0);
 }
